@@ -8,15 +8,15 @@ class QLIKELoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, y_pred, y_true):
-        # 确保预测值和真实值都为正，以保证数值稳定性
+        # Ensure both predicted and actual values are positive to guarantee numerical stability.
         y_pred = torch.clamp(y_pred, min=self.epsilon)
         y_true = torch.clamp(y_true, min=self.epsilon)
         
-        # 计算每个元素的QLIKE损失
+        # Compute the QLIKE loss for each element
         ratio = y_true / y_pred
         loss = ratio - torch.log(ratio) - 1
         
-        # 根据reduction参数聚合损失
+        # Aggregate losses based on the reduction parameter
         if self.reduction == 'mean':
             return torch.mean(loss)
         elif self.reduction == 'sum':
@@ -24,4 +24,4 @@ class QLIKELoss(nn.Module):
         elif self.reduction == 'none':
             return loss
         else:
-            raise ValueError(f"不支持的reduction类型: {self.reduction}")
+            raise ValueError(f"Unsupported reduction types: {self.reduction}")

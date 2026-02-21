@@ -17,15 +17,14 @@ def train(p: dict, trial_folder: str) -> dict:
     torch.manual_seed(p['seed'])
     np.random.seed(p['seed'])
 
-    # --- [修改 1] 读取配置开关 ---
+    # --- Read configuration switch ---
     include_energy = p.get('include_energy', True)
-    use_har = p.get('use_har_features', True) # <--- [新增] 读取 HAR 开关
+    use_har = p.get('use_har_features', True)     # Read HAR switch
     
-    print(f"--- [配置] include_energy = {include_energy} ---")
-    print(f"--- [配置] use_har_features = {use_har} ---")
+    print(f"--- [configuration] include_energy = {include_energy} ---")
+    print(f"--- [configuration] use_har_features = {use_har} ---")
 
-    # --- [修改 2] 动态设置缓存路径并初始化 Dataset ---
-    # 建议在 root 路径中包含配置信息，以避免不同配置（有/无 HAR）读取到同一个旧缓存
+    # --- Dynamically configure the cache path and initialise the Dataset ---
     dataset_root_name = f"final_hetero_dataset_seq_{p['seq_length']}_har_{use_har}"
     
     dataset = FinalHeteroDataset(
@@ -36,11 +35,11 @@ def train(p: dict, trial_folder: str) -> dict:
         stock_energy_corr_folder=p['stock_energy_corr_folder'],
         energy_energy_corr_folder=p['energy_energy_corr_folder'],
         node_info_file=p['node_info_file'],
-        root=f"processed_data1001/{dataset_root_name}", # <--- [修改] 路径包含 HAR 状态
+        root=f"processed_data1001/{dataset_root_name}",     # Path contains HAR status
         seq_length=p['seq_length'],
         intraday_points=p['intraday_points'],
         include_energy=include_energy,
-        use_har_features=use_har # <--- [新增] 传递给 Dataset
+        use_har_features=use_har     # Passed to Dataset
     )
     
     intraday_points = p.get('intraday_points', 3)
@@ -49,7 +48,7 @@ def train(p: dict, trial_folder: str) -> dict:
     robustness_limit_days = int(ROBUSTNESS_PROPORTION * total_days) 
     dataset = dataset[:robustness_limit_days * intraday_points] 
     total_days = robustness_limit_days 
-    print(f"--- [稳健性检查] 总天数限制为: {total_days} 天 ({ROBUSTNESS_PROPORTION * 100}%) ---")
+    print(f"--- [Robustness check] The total number of days is limited to: {total_days} days ({ROBUSTNESS_PROPORTION * 100}%) ---")
     
     train_days = int(p['train_proportion'] * total_days)
     validation_days = int(p['validation_proportion'] * total_days)
@@ -84,12 +83,11 @@ def train(p: dict, trial_folder: str) -> dict:
     diag_mean_low = rv_stats['daily_mean']
     diag_std_low = rv_stats['daily_std']
 
-    # --- [修改 3] 核心：动态计算特征维度 ---
-    # 定义 HAR 特征的基础长度：如果启用则为 3 (Rv_d, Rv_w, Rv_m)，否则为 0
+    # ---Dynamic computation of feature dimensions ---
+    # Define the base length for HAR features: 3 when enabled (Rv_d, Rv_w, Rv_m), otherwise 0.
     har_dim = 3 if use_har else 0
 
-    # 1. 股票特征维度计算
-    # 组成: HAR(har_dim) + VI(1) + CIJ_SS(num_stocks-1) + [可选] CORR_SE(num_energy)
+    # 1. Calculation of Stock Feature Dimensions
     stock_feature_len_base = har_dim + 1 + (num_stocks - 1)
     
     if include_energy:
@@ -97,18 +95,17 @@ def train(p: dict, trial_folder: str) -> dict:
     
     stock_feature_dim = stock_feature_len_base * p['seq_length']
 
-    # 2. 能源特征维度计算
+    # 2. Calculation of Energy Characteristic Dimensions
     energy_feature_dim = 0
     if include_energy:
-        # 组成: HAR(har_dim) + VI(1) + CIJ_ES(num_stocks) + CORR_EE(num_energy-1)
         energy_feature_len_base = har_dim + 1 + num_stocks + (num_energy - 1)
         energy_feature_dim = energy_feature_len_base * p['seq_length']
 
     edge_feature_dim = 3 * p['seq_length']
 
-    print(f"--- [维度检查] HAR维度: {har_dim}, 股票特征总维: {stock_feature_dim}, 能源特征总维: {energy_feature_dim} ---")
+    print(f"--- [Dimension Check] HAR dimension: {har_dim}, Total stock feature dimension: {stock_feature_dim}, Total energy feature dimension: {energy_feature_dim} ---")
     
-    # --- 模型初始化 ---
+    # --- Model initialisation ---
     model = HeteroGNNModel(
         stock_feature_dim=stock_feature_dim, 
         energy_feature_dim=energy_feature_dim,
@@ -136,12 +133,12 @@ def train(p: dict, trial_folder: str) -> dict:
     elif p['loss_function'] == 'qlike':
         train_criterion = QLIKELoss(reduction='none')
     else:
-        raise ValueError(f"不支持的损失函数: {p['loss_function']}")
+        raise ValueError(f"Unsupported loss functions: {p['loss_function']}")
 
     min_validation_loss = float('inf')
     best_epoch = -1
     
-    # --- 训练循环 ---
+    # --- Training ---
     for epoch in range(p['num_epochs']):
         model.train()
         for data in train_loader:
@@ -152,7 +149,7 @@ def train(p: dict, trial_folder: str) -> dict:
             
             y_high, y_low = data['stock'].y_high, data['stock'].y_low
             
-            # 使用宏平均
+            # Use macro averaging
             loss_high = train_criterion(pred_high, y_high).mean(dim=0).mean()
             loss_low = train_criterion(pred_low, y_low).mean(dim=0).mean()
             loss = loss_low
@@ -186,7 +183,7 @@ def train(p: dict, trial_folder: str) -> dict:
 
     best_model_path = os.path.join(folder_path, 'best_model.pth')
     if not os.path.exists(best_model_path):
-        print(f"警告: 未找到最佳模型文件: {best_model_path}")
+        print(f"Warning: Best model file not found: {best_model_path}")
         return { 'min_validation_loss': float('inf') }
 
     model.load_state_dict(torch.load(best_model_path))
@@ -244,7 +241,7 @@ def train(p: dict, trial_folder: str) -> dict:
         rmse_h = math.sqrt(avg_mse_h) if not np.isnan(avg_mse_h) else np.nan
         rmse_l = math.sqrt(avg_mse_l) if not np.isnan(avg_mse_l) else np.nan
         
-        print(f"评估指标: 'mse_h': {avg_mse_h}, 'rmse_h': {rmse_h}, 'qlike_h': {avg_qlike_h}\n'mse_l': {avg_mse_l}, 'rmse_l': {rmse_l}, 'qlike_l': {avg_qlike_l}")
+        print(f"Evaluation indicators: 'mse_h': {avg_mse_h}, 'rmse_h': {rmse_h}, 'qlike_h': {avg_qlike_h}\n'mse_l': {avg_mse_l}, 'rmse_l': {rmse_l}, 'qlike_l': {avg_qlike_l}")
         return {
             'mse_h': avg_mse_h, 'rmse_h': rmse_h, 'qlike_h': avg_qlike_h,
             'mse_l': avg_mse_l, 'rmse_l': rmse_l, 'qlike_l': avg_qlike_l

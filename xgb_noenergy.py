@@ -22,17 +22,17 @@ def calculate_macro_metrics(y_true, y_pred, stock_codes):
     df = pd.DataFrame({'true': y_true, 'pred': y_pred, 'code': stock_codes})
     mse_list, rmse_list, qlike_list = [], [], []
     
-    # 按股票代码分组计算
+    # Calculate grouped by stock code
     for code, group in df.groupby('code'):
         mse = mean_squared_error(group['true'], group['pred'])
-        rmse = np.sqrt(mse) # 单只股票的 RMSE
+        rmse = np.sqrt(mse)     # single stock RMSE
         qlike = calculate_qlike(group['true'].values, group['pred'].values)
         
         mse_list.append(mse)
         rmse_list.append(rmse)
         qlike_list.append(qlike)
     
-    # 返回指标的平均值
+    # Return the average value of the indicator
     return np.mean(mse_list), np.mean(rmse_list), np.mean(qlike_list)
 
 def load_data_from_folder(folder_path):
@@ -45,12 +45,12 @@ def load_data_from_folder(folder_path):
             df.index.name = 'time_index'
             data_dict[code] = df
         except pd.errors.EmptyDataError:
-            print(f"警告：文件 {file_path} 为空，已跳过。")
+            print(f"Warning: File {file_path} is empty and has been skipped.")
     return data_dict
 
 def create_lag_features(df, prefix='RV'):
     """
-    通用滞后特征生成函数
+    Generate lagged features
     """
     df = df.copy()
     col_name = df.columns[0]
@@ -61,11 +61,11 @@ def create_lag_features(df, prefix='RV'):
 
 def process_all_stocks_features(stock_data_dict, max_length):
     """
-    处理所有股票的特征：生成每只股票的滞后特征，并横向合并成一个巨大的宽表 (All-Stocks Features)。
+    Processing all stock features: Generate lagged features for each stock and horizontally merge them into a large wide table (All-Stocks Features).
     """
     stock_features_list = []
     for code, df in stock_data_dict.items():
-        # 为股票特征添加特定前缀，例如 STOCK_000001_lag_day
+        # Add specific prefixes to stock attributes, e.g. STOCK_000001_lag_day
         feat_df = create_lag_features(df, prefix=f'STOCK_{code}')
         cols_to_keep = [c for c in feat_df.columns if 'lag' in c]
         feat_df = feat_df[cols_to_keep]
@@ -74,10 +74,10 @@ def process_all_stocks_features(stock_data_dict, max_length):
     if not stock_features_list:
         return pd.DataFrame()
     
-    # 横向合并所有股票的特征
+    # Horizontal consolidation of all share characteristics
     full_stocks_df = pd.concat(stock_features_list, axis=1)
     
-    # 统一长度并填充 
+    # Uniform length and padding 
     full_stocks_df = full_stocks_df.reindex(range(max_length)).ffill().fillna(0)
     full_stocks_df = full_stocks_df.reset_index(drop=True)
     full_stocks_df['time_index'] = full_stocks_df.index
@@ -86,64 +86,59 @@ def process_all_stocks_features(stock_data_dict, max_length):
 
 def prepare_combined_data(stock_data):
     """
-    准备面板数据，不包含能源特征。
+    Prepare the panel data, excluding energy characteristics.
     """
-    # 1. 计算最大时间长度
+    # 1. Calculate the maximum duration
     max_len_stock = max([len(df) for df in stock_data.values()]) if stock_data else 0
     total_max_len = max_len_stock
     
-    print(f"数据最大时间长度: {total_max_len}")
+    print(f"Maximum data duration: {total_max_len}")
     
-    # 2. 构建全量股票特征 (N * 3 列)
-    print("--- 构建全量股票特征 (All-Stocks) ---")
+    # 2. Constructing comprehensive stock features (N * 3 columns)
+    print("--- Constructing comprehensive stock features (All-Stocks) ---")
     all_stocks_features_df = process_all_stocks_features(stock_data, total_max_len)
     
-    # 3. 形成全局特征池
+    # 3. Forming a global feature pool
     global_features = all_stocks_features_df
         
-    print(f"全局特征矩阵维度: {global_features.shape}")
+    print(f"Global feature matrix dimension: {global_features.shape}")
 
-    # 4. 构建训练用的面板数据
+    # 4. Constructing panel data for training purposes
     all_data_rows = []
     
-    print("--- 正在构建面板数据集 (这可能需要一些时间) ---")
+    print("--- Building the panel dataset ---")
     for stock_code, df in tqdm(stock_data.items(), desc="Processing Stocks"):
-        # 准备当前股票的目标值 (Target)
+        # Prepare the target value for the current stock
         df_target = df[['RV']].copy()
         df_target['stock_code'] = stock_code
-        df_target = df_target.reset_index() # 获得 time_index
+        df_target = df_target.reset_index()     # Obtain the time_index
         
-        # 将全局特征 merge 到当前股票的时间序列上
+        # Merge the global features into the current stock's time series 
         df_merged = pd.merge(df_target, global_features, on='time_index', how='left')
         
         all_data_rows.append(df_merged)
         
     combined_df = pd.concat(all_data_rows).reset_index(drop=True)
-    
-    # 排序以确保时间顺序
     combined_df.sort_values(by=['time_index', 'stock_code'], inplace=True)
-    
-    # 删除包含 NaN 的行
     combined_df = combined_df.dropna()
-
-    # 保存索引信息方便后续还原
+    # Save index information for subsequent restoration
     index_cols = combined_df[['time_index', 'stock_code']]
     
-    # 5. 生成 One-Hot 编码 (区分股票身份)
-    print("--- 生成独热编码 ---")
+    # 5. Generate one-hot encoding (to distinguish stock identities) 
+    print("--- Generate unique thermal codes ---")
     features_df = pd.get_dummies(combined_df, columns=['stock_code'], prefix='stock')
     
-    # 分离 X 和 y
+    # Separate X and y
     X = features_df.drop(['RV', 'time_index'], axis=1)
     y = features_df['RV']
     
-    print(f"最终特征矩阵 X 维度: {X.shape}")
+    print(f"Final feature matrix X dimension: {X.shape}")
     
     return X, y, index_cols
 
 def objective(trial, X_train, y_train, X_val, y_val):
 
-    # 定义超参数搜索空间 
+    # Defining the hyperparameter search space 
     param_grid = {
         'max_depth': trial.suggest_int('max_depth', 3, 8),
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
@@ -155,7 +150,7 @@ def objective(trial, X_train, y_train, X_val, y_val):
         'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 1.0, log=True),
     }
 
-    # 添加固定的参数
+    # Add fixed parameters
     param_grid.update({
         'n_estimators': 1000, 
         'objective': 'reg:squarederror',
@@ -164,13 +159,13 @@ def objective(trial, X_train, y_train, X_val, y_val):
         'early_stopping_rounds': 25,
     })
     
-    # 训练模型
+    # Train the model
     model = xgb.XGBRegressor(**param_grid)
     model.fit(X_train, y_train,
               eval_set=[(X_val, y_val)],
               verbose=False) 
     
-    # 在验证集上评估并返回指标
+    # Evaluate on the validation set and return the metrics
     preds = model.predict(X_val)
     mse = mean_squared_error(y_val, preds)
     return mse
@@ -178,13 +173,13 @@ def objective(trial, X_train, y_train, X_val, y_val):
 def main():
     stock_folder = "new_day_vol"
     
-    print("正在加载股票数据...")
+    print("Loading stock data...")
     stock_data = load_data_from_folder(stock_folder)
 
-    # 调用修改后的数据准备函数，只传入股票数据
+    # Call the modified data preparation function, passing only the stock data.
     X_combined, y_combined, index_info = prepare_combined_data(stock_data)
 
-    print("--- 正在划分数据集 ---")
+    print("--- Splitting the dataset ---")
     subset_end_index = int(len(X_combined) * 1.0) 
     
     X_subset = X_combined.iloc[:subset_end_index]
@@ -209,13 +204,13 @@ def main():
     print(f"Train samples: {len(X_train)}, Val samples: {len(X_val)}, Test samples: {len(X_test)}")
 
     scaler = StandardScaler()
-    print("正在进行标准化 (StandardScaler)...")
+    print("Standardisation is currently underway. (StandardScaler)...")
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled = scaler.transform(X_val)
     X_test_scaled = scaler.transform(X_test)
     
-    # --- 运行 Optuna 调优 ---
-    print("--- 启动 Optuna 超参数调优 ---")
+    # --- Running Optuna optimisation ---
+    print("--- Initiate Optuna hyperparameter tuning ---")
     
     objective_with_data = functools.partial(objective,
                                             X_train=X_train_scaled,
@@ -230,8 +225,8 @@ def main():
     
     study.optimize(objective_with_data, n_trials=50)
     
-    print(f"调优完成。最佳验证集 MSE: {study.best_value:.4e}")
-    print(f"最佳参数组合: {study.best_params}")
+    print(f"Tuning complete. Best validation set MSE: {study.best_value:.4e}")
+    print(f"Optimal parameter combination: {study.best_params}")
 
     best_params = study.best_params
     
@@ -245,27 +240,27 @@ def main():
     
     model = xgb.XGBRegressor(**best_params)
     
-    print("开始使用最佳参数训练最终的 XGBoost 模型...")
+    print("Begin training the final XGBoost model using optimal parameters...")
     model.fit(X_train_scaled, y_train, 
               eval_set=[(X_val_scaled, y_val)], 
               verbose=False)
     
     best_iteration = model.best_iteration
-    print(f"模型通过早停确定最佳树数量为: {best_iteration}")
+    print(f"The model determined the optimal number of trees via early stopping to be: {best_iteration}")
     
     val_pred = model.predict(X_val_scaled)
     test_pred = model.predict(X_test_scaled)
     
-    print("\n" + "="*25 + " XGBoost 模型性能 (Macro Average) " + "="*25)
+    print("\n" + "="*25 + " XGBoost Model performance (Macro Average) " + "="*25)
 
     val_mse, val_rmse, val_qlike = calculate_macro_metrics(y_val, val_pred, index_val['stock_code'])
-    print("【验证集 Validation】:")
+    print("【Validation】:")
     print(f"  - Macro MSE:    {val_mse:.4e}")
     print(f"  - Macro RMSE:   {val_rmse:.4e}")
     print(f"  - Macro QLIKE: {val_qlike:.4f}")
 
     test_mse, test_rmse, test_qlike = calculate_macro_metrics(y_test, test_pred, index_test['stock_code'])
-    print("【测试集 Test】:")
+    print("【Test】:")
     print(f"  - Macro MSE:    {test_mse:.4e}")
     print(f"  - Macro RMSE:   {test_rmse:.4e}")
     print(f"  - Macro QLIKE: {test_qlike:.4f}")
@@ -276,23 +271,23 @@ def main():
     output_path = os.path.join(output_dir, 'xgboost_allstocks_noenergy_tuned_predictions.xlsx')
     
     res_val = index_val.copy()
-    res_val['真实值'] = y_val.values
-    res_val['预测值'] = val_pred
-    res_val['数据集'] = 'Validation'
+    res_val['Actual value'] = y_val.values
+    res_val['Predicted value'] = val_pred
+    res_val['dataset'] = 'Validation'
     
     res_test = index_test.copy()
-    res_test['真实值'] = y_test.values
-    res_test['预测值'] = test_pred
-    res_test['数据集'] = 'Test'
+    res_test['Actual value'] = y_test.values
+    res_test['Predicted value'] = test_pred
+    res_test['dataset'] = 'Test'
     
     all_res = pd.concat([res_val, res_test])
     
-    print(f"正在写入 Excel: {output_path}")
+    print(f"writing to Excel: {output_path}")
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        for stock_id, group_df in tqdm(all_res.groupby('stock_code'), desc="写入Sheet"):
-            group_df[['真实值', '预测值', '数据集']].to_excel(writer, sheet_name=str(stock_id), index=False)
+        for stock_id, group_df in tqdm(all_res.groupby('stock_code'), desc="write to Sheet"):
+            group_df[['Actual value', 'Predicted value', 'dataset']].to_excel(writer, sheet_name=str(stock_id), index=False)
             
-    print("保存完成。")
+    print(f"Saved successfully.")
 
 if __name__ == "__main__":
     main()

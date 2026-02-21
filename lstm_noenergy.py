@@ -72,7 +72,7 @@ def calculate_macro_metrics_matrix(y_true, y_pred):
         col_pred = y_pred[:, i]
         
         mse = mean_squared_error(col_true, col_pred)
-        rmse = np.sqrt(mse) # 单只股票 RMSE
+        rmse = np.sqrt(mse) # Single stock RMSE
         qlike = calculate_qlike(col_true, col_pred)
         
         mse_list.append(mse)
@@ -83,10 +83,10 @@ def calculate_macro_metrics_matrix(y_true, y_pred):
 
 def objective(trial, X_train, y_train, X_val, y_val, device, input_size, output_size, num_epochs=50, patience=5):
     """
-    Optuna 目标函数，用于训练和评估一个超参数组合。
+    Optuna objective function, used for training and evaluating a combination of hyperparameters.
     """
     
-    # 1. 定义超参数搜索空间
+    # 1. Defining the hyperparameter search space
     hidden_layout = trial.suggest_categorical('hidden_layout', [
         [256, 128, 64], [192, 96, 48], [128, 64, 32],
         [256, 128], [192, 96], [128, 64],
@@ -98,7 +98,7 @@ def objective(trial, X_train, y_train, X_val, y_val, device, input_size, output_
     dropout = trial.suggest_float('dropout', 0.1, 0.5)
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-4, log=True)
 
-    # 2. 创建 DataLoader, Model, Optimizer
+    # 2. create DataLoader, Model, Optimizer
     train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
     
     model = MultivariateLSTM(
@@ -115,7 +115,7 @@ def objective(trial, X_train, y_train, X_val, y_val, device, input_size, output_
         
     criterion = nn.MSELoss()
     
-    # 3. 训练和验证循环
+    # 3. Training and validation
     best_loss = float('inf')
     counter = 0
     
@@ -152,14 +152,14 @@ def inverse_transform_prediction(pred_scaled, y_scaled, full_cols, target_cols):
 def make_long_df(y_true, y_pred, dataset_name, stock_ids_list):
     df_true = pd.DataFrame(y_true, columns=stock_ids_list)
     df_true['time_idx'] = range(len(df_true))
-    df_true_long = df_true.melt(id_vars='time_idx', var_name='stock_code', value_name='真实值')
+    df_true_long = df_true.melt(id_vars='time_idx', var_name='stock_code', value_name='Actual value')
     
     df_pred = pd.DataFrame(y_pred, columns=stock_ids_list)
     df_pred['time_idx'] = range(len(df_pred))
-    df_pred_long = df_pred.melt(id_vars='time_idx', var_name='stock_code', value_name='预测值')
+    df_pred_long = df_pred.melt(id_vars='time_idx', var_name='stock_code', value_name='Predicted value')
     
     res = pd.merge(df_true_long, df_pred_long, on=['time_idx', 'stock_code'])
-    res['数据集'] = dataset_name
+    res[dataset'] = dataset_name
     return res
 
 
@@ -173,7 +173,7 @@ def main():
     NUM_EPOCHS = 50  
     PATIENCE = 5     
     N_TRIALS = 100   
-    print("正在加载并合并股票数据...")
+    print("Loading and consolidating stock data...")
     wide_df, stock_ids, num_stocks = prepare_wide_data(STOCK_FOLDER)
     
     subset_len = int(len(wide_df) * 1.0)
@@ -202,7 +202,7 @@ def main():
     y_test = torch.tensor(y_all[train_samples + val_samples:], dtype=torch.float32)
     
     print(f"Train shape: {X_train.shape}")
-    print(f"--- 启动 Optuna 超参数调优 (TPE, {N_TRIALS} 次尝试) ---")
+    print(f"--- Initiate Optuna hyperparameter tuning (TPE, {N_TRIALS} attempts) ---")
     
     input_size = X_train.shape[2]
     output_size = num_stocks
@@ -225,10 +225,10 @@ def main():
     
     study.optimize(objective_with_data, n_trials=N_TRIALS, show_progress_bar=True)
     
-    print("调优完成。")
-    print(f"  最佳验证集 MSE: {study.best_value:.4e}")
-    print(f"  最佳参数组合: {study.best_params}")
-    print("开始使用最佳参数训练最终的 LSTM (仅股票) 模型...")
+    print("Optimisation complete.")
+    print(f"  Best validation set MSE: {study.best_value:.4e}")
+    print(f"  Optimal parameter combination: {study.best_params}")
+    print("Commencing training of the LSTM model (stocks only) using optimal parameters...")
     best_params = study.best_params
     
     final_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=best_params['batch_size'], shuffle=True)
@@ -275,7 +275,7 @@ def main():
                 print(f"Early stopping at epoch {epoch+1}")
                 break
 
-    print("最终模型训练完成，加载最佳权重进行预测...")
+    print("The final model training has been completed, the optimal weights have been loaded for prediction....")
     model.load_state_dict(torch.load('best_lstm_stocks_ONLY.pth'))
     model.eval()
     
@@ -293,22 +293,22 @@ def main():
         test_pred_scaled, y_test_scaled, wide_df.shape[1], num_stocks
     )
 
-    print("\n" + "="*25 + " LSTM (仅股票) 模型性能 (Macro Average) " + "="*25)
+    print("\n" + "="*25 + " LSTM (Stocks Only) Model Performance (Macro Average) " + "="*25)
     
     val_mse, val_rmse, val_qlike = calculate_macro_metrics_matrix(y_val_orig, val_pred_orig)
-    print("【验证集 Validation】:")
+    print("【Validation】:")
     print(f"  - Macro MSE:     {val_mse:.4e}")
     print(f"  - Macro RMSE:    {val_rmse:.4e}")
     print(f"  - Macro QLIKE:  {val_qlike:.4f}")
 
     test_mse, test_rmse, test_qlike = calculate_macro_metrics_matrix(y_test_orig, test_pred_orig)
-    print("【测试集 Test】:")
+    print("【Test】:")
     print(f"  - Macro MSE:     {test_mse:.4e}")
     print(f"  - Macro RMSE:    {test_rmse:.4e}")
     print(f"  - Macro QLIKE:  {test_qlike:.4f}")
     print("="*50)
 
-    # --- 写入 Excel ---
+    # --- write to Excel ---
     output_dir = 'results_low'
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, 'lstm_stocks_ONLY_tuned_predictions.xlsx')
@@ -318,12 +318,12 @@ def main():
     
     final_results = pd.concat([df_val_final, df_test_final])
 
-    print(f"正在写入 Excel: {output_path}")
+    print(f"writing to Excel: {output_path}")
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        for stock_id, group_df in tqdm(final_results.groupby('stock_code'), desc="写入Sheet"):
-            group_df[['真实值', '预测值', '数据集']].to_excel(writer, sheet_name=str(stock_id), index=False)
+        for stock_id, group_df in tqdm(final_results.groupby('stock_code'), desc="write toSheet"):
+            group_df[['Actual value', 'Predicted value', 'dataset']].to_excel(writer, sheet_name=str(stock_id), index=False)
     
-    print("保存完成。")
+    print("Saved successfully.")
 
 if __name__ == "__main__":
     main()

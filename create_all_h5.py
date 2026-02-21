@@ -1,54 +1,53 @@
 import yaml
 import os
 from utils.datasetchange import FinalHeteroDataset
-# 导入 pandas 是因为 FinalHeteroDataset 内部依赖它
 import pandas as pd 
 
 def create_all_caches():
     """
-    一个用于批量创建所有指定seq_length的数据集缓存的工具脚本。
-    它会读取调优配置文件，并为其中的每一个seq_length值生成一个专属的
-    PyTorch Geometric缓存文件夹。
+    A utility script for batch-creating dataset caches for all specified seq_length values.
+    It reads the tuning configuration file and generates a dedicated PyTorch Geometric cache folder 
+    for each seq_length value therein.
     """
-    # --- 1. 加载超参数调优的配置文件 ---
+    # --- 1. Load the configuration file for hyperparameter tuning ---
     try:
         config_path = './config/GNN_param_optuna.yaml'
         with open(config_path, 'r', encoding='utf-8') as f:
             p = yaml.safe_load(f)
-        print(f"--- 成功加载配置文件: {config_path} ---")
+        print(f"--- Configuration file loaded successfully: {config_path} ---")
     except FileNotFoundError:
-        print(f"错误：找不到调优配置文件 '{config_path}'。")
+        print(f"Error: Tuning profile not found '{config_path}'.")
         return
 
-    # --- 2. 获取所有需要处理的 seq_length ---
+    # --- 2. Retrieve all seq_lengths requiring processing ---
     try:
         seq_lengths_to_process = p['hyperparameters']['seq_length'][0]
         if not isinstance(seq_lengths_to_process, list):
-            print("错误：配置文件中的 seq_length 格式不正确。")
+            print("Error: The format of seq_length in the configuration file is incorrect.")
             return
-        print(f"--- 准备为以下 seq_length 创建缓存: {seq_lengths_to_process} ---")
+        print(f"--- Prepare to create a cache for the following seq_length: {seq_lengths_to_process} ---")
     except (KeyError, IndexError):
-        print("错误：在配置文件中找不到 'seq_length' 的设置。")
+        print("Error: The 'seq_length' setting could not be found in the configuration file.")
         return
 
-    # --- 3. 循环创建每一个缓存文件 ---
+    # --- 3. Create each cache file in a loop ---
     for seq_length in seq_lengths_to_process:
         print(f"\n=================================================")
-        print(f"====== 开始处理 seq_length = {seq_length} ======")
+        print(f"====== Commencing processing seq_length = {seq_length} ======")
         print(f"=================================================")
         
-        # 定义当前seq_length专属的缓存路径
+        # Define the cache path specific to the current seq_length
         root_path = f"processed_data1001/final_hetero_dataset_seq_{seq_length}"
         
-        # 检查缓存是否已经存在
+        # Check whether the cache already exists
         if os.path.exists(os.path.join(root_path, 'processed', 'data.pt')):
-            print(f"--- 缓存已存在于 '{root_path}'，跳过。 ---")
+            print(f"--- The cache already exists at '{root_path}', skipping. ---")
             continue
             
         try:
-            # 实例化Dataset类。如果缓存不存在，它会自动调用process()方法
-            # 我们在这里“假装”要加载它，从而触发它的创建过程。
-            print(f"--- 正在为 seq_length={seq_length} 创建新的数据集缓存... ---")
+            # Instantiate the Dataset class. If the cache does not exist, it will automatically invoke the process() method.
+            # We are here 'pretending' to load it, thereby triggering its creation process.
+            print(f"--- Creating a new dataset cache for seq_length={seq_length}... ---")
             dataset = FinalHeteroDataset(
                 hdf5_file_vol=p['hdf5_file_vol_std'],
                 hdf5_file_volvol=p['hdf5_file_volvol_std'],
@@ -61,19 +60,18 @@ def create_all_caches():
                 seq_length=seq_length,
                 intraday_points=p['intraday_points']
             )
-            print(f"--- seq_length = {seq_length} 的缓存创建成功！---")
+            print(f"--- Cache creation for seq_length = {seq_length} successful---")
 
         except Exception as e:
-            print(f"!!!!!! 处理 seq_length = {seq_length} 时发生严重错误: {e} !!!!!!")
-            # 即使一个失败了，也继续尝试下一个
+            print(f"!!!!!! A fatal error occurred while processing seq_length = {seq_length}: {e} !!!!!!")
+            # Even if one fails, keep trying the next one.
             continue
             
     print("\n=================================================")
-    print("====== 所有指定的缓存文件均已处理完毕。 ======")
+    print("====== All specified cache files have been processed. ======")
     print("=================================================")
 
 
 if __name__ == '__main__':
-    # 确保你的 utils.datasetchange 脚本使用的是“离线”版本
-    # (即 process() 方法内有拼接逻辑的版本)
+    
     create_all_caches()

@@ -31,7 +31,7 @@ def load_folder_to_df(path):
     return res
 
 def build_har_features(series, prefix):
-    """构建单个序列的 HAR 特征"""
+    """Constructing HAR features for a single sequence"""
     df = pd.DataFrame()
     df[f'{prefix}_lag1'] = series.shift(1)
     df[f'{prefix}_week'] = series.shift(1).rolling(5).mean()
@@ -42,12 +42,12 @@ def main():
     stock_path = 'new_day_vol'
     energy_path = 'new_day_vol_energy'
     
-    print("加载数据...")
+    print("Loading data..")
     stock_df = load_folder_to_df(stock_path)  
     energy_df = load_folder_to_df(energy_path) 
     
-    # 1. 构建全量的能源特征
-    print("构建能源 HAR 特征...")
+    # Constructing HAR features for all energy future
+    print("Constructing HAR features for all energy future...")
     energy_feats = []
     for col in energy_df.columns:
         feats = build_har_features(energy_df[col], prefix=f'ENERGY_{col}')
@@ -58,8 +58,8 @@ def main():
     else:
         all_energy_features = pd.DataFrame()
 
-    # 构建所有股票的全量 HAR 特征 ---
-    print("构建所有股票的 HAR 特征...")
+    # Constructing HAR features for all stocks
+    print("Constructing HAR features for all stocks...")
     stock_feats_list = []
     for col in stock_df.columns:
         feats = build_har_features(stock_df[col], prefix=f'STOCK_{col}')
@@ -70,11 +70,11 @@ def main():
     else:
         all_stock_har_features = pd.DataFrame()
 
-    print("开始逐个股票训练 HAR-X-AllStocks (Ridge)...")
+    print("Commencing individual stock training: HAR-X-AllStocks (Ridge)...")
     
     results_list = []
     
-    # --- Macro 指标收集列表 ---
+    # --- Macro Indicator Collection List ---
     val_metrics = {'mse': [], 'rmse': [], 'qlike': []}
     test_metrics = {'mse': [], 'rmse': [], 'qlike': []}
     
@@ -86,7 +86,7 @@ def main():
     for stock_col in tqdm(stock_df.columns, desc="Processing Stocks"):
         y = stock_df[stock_col]
         
-        # 1. 找出当前股票 (y) 对应的特征列
+        # 1. Identify the feature column corresponding to the current stock (y)
         current_stock_prefix = f'STOCK_{stock_col}'
         own_feature_cols = [
             col for col in all_stock_har_features.columns 
@@ -94,10 +94,10 @@ def main():
         ]
         X_own_stock = all_stock_har_features[own_feature_cols]
         
-        # 2. 找出所有其他股票的特征
+        # 2. Identify the characteristics of all other stocks
         X_other_stocks = all_stock_har_features.drop(columns=own_feature_cols)
         
-        # 3. 合并特征
+        # 3. Merge Features
         X = pd.concat([X_own_stock, X_other_stocks, all_energy_features], axis=1)
         
         
@@ -128,7 +128,7 @@ def main():
         model = RidgeCV(alphas=np.logspace(-3, 3, 10), cv=TimeSeriesSplit(5))
         model.fit(X_train_s, y_train)
         
-        # --- 模型预测 ---
+        # --- Model prediction ---
         pred_val = model.predict(X_val_s)
         pred_test = model.predict(X_test_s)
 
@@ -136,51 +136,51 @@ def main():
         pred_val = np.maximum(pred_val, PREDICTION_LOWER_BOUND)
         pred_test = np.maximum(pred_test, PREDICTION_LOWER_BOUND)
         
-        # --- 计算单只股票的指标并存入列表 (Macro Logic) ---
-        # 验证集
+        # --- Calculate the indicators for individual stocks and store them in a list (Macro Logic) ---
+        # Validation set
         v_mse = mean_squared_error(y_val, pred_val)
         val_metrics['mse'].append(v_mse)
         val_metrics['rmse'].append(np.sqrt(v_mse))
         val_metrics['qlike'].append(calculate_qlike(y_val.values, pred_val)) 
         
-        # 测试集
+        # test set
         t_mse = mean_squared_error(y_test, pred_test)
         test_metrics['mse'].append(t_mse)
         test_metrics['rmse'].append(np.sqrt(t_mse))
         test_metrics['qlike'].append(calculate_qlike(y_test.values, pred_test))
 
-        # 收集结果用于 Excel
+        # Collect the results for use in Excel
         res_val = pd.DataFrame({
             'stock_code': stock_col,
-            '真实值': y_val.values,
-            '预测值': pred_val, 
-            '数据集': 'Validation'
+            'Actual value': y_val.values,
+            'Predicted value': pred_val, 
+            'dataset': 'Validation'
         })
         results_list.append(res_val)
         
         res_test = pd.DataFrame({
             'stock_code': stock_col,
-            '真实值': y_test.values,
-            '预测值': pred_test, 
-            '数据集': 'Test'
+            'Actual value': y_test.values,
+            'Predicted value': pred_test, 
+            'dataset': 'Test'
         })
         results_list.append(res_test)
     
-    # --- 3. 整体评估输出 (Macro Average) ---
+    # --- 3. Overall assessment output (Macro Average) ---
     print("\n" + "="*25 + " HAR-X-AllStocks 模型性能 (Macro Average) " + "="*25)
     
-    print("【验证集 Validation】:")
+    print("【Validation set】:")
     print(f"  - MSE:    {np.mean(val_metrics['mse']):.4e}")
     print(f"  - RMSE:   {np.mean(val_metrics['rmse']):.4e}")
     print(f"  - QLIKE: {np.mean(val_metrics['qlike']):.4f}")
     
-    print("【测试集 Test】:")
+    print("【Test set】:")
     print(f"  - MSE:    {np.mean(test_metrics['mse']):.4e}")
     print(f"  - RMSE:   {np.mean(test_metrics['rmse']):.4e}")
     print(f"  - QLIKE: {np.mean(test_metrics['qlike']):.4f}")
     print("="*64)
     
-    # --- 4. 写入 Excel ---
+    # --- 4. write to Excel ---
     output_dir = 'results_low'
     os.makedirs(output_dir, exist_ok=True)
     
@@ -188,12 +188,12 @@ def main():
 
     final_df = pd.concat(results_list, ignore_index=True)
 
-    print(f"正在写入 Excel: {output_path}")
+    print(f"Writing to Excel:  {output_path}")
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        for stock_id, group_df in tqdm(final_df.groupby('stock_code'), desc="写入Sheet"):
-            group_df[['真实值', '预测值', '数据集']].to_excel(writer, sheet_name=str(stock_id), index=False)
+        for stock_id, group_df in tqdm(final_df.groupby('stock_code'), desc="Writing to Sheet"):
+            group_df[['Actual value', 'Predicted value', 'dataset']].to_excel(writer, sheet_name=str(stock_id), index=False)
             
-    print(f"保存完成。")
+    print(f"Saved successfully.")
 
 if __name__ == "__main__":
     main()

@@ -8,31 +8,30 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 from torch_geometric.loader import DataLoader
-# 确保以下模块在您的运行环境中可导入
 from utils.losses import QLIKELoss
 from utils.datasetchange import FinalHeteroDataset
 from utils.modelschange import HeteroGNNModel
 
 # ==============================================================================
-# I. 预测生成函数
+# I. Predictive Generative Function
 # ==============================================================================
 
 def generate_predictions(model, loader, device, p, stock_ids, diag_mean_high, diag_std_high, diag_mean_low, diag_std_low):
     """
-    生成预测并返回包含真实值和预测值的 Pandas DataFrame。
+    Generate predictions and return a Pandas DataFrame containing both actual and predicted values.
     """
     model.eval()
     all_preds_h, all_actuals_h, all_preds_l, all_actuals_l = [], [], [], []
     
     with torch.no_grad():
-        for data in tqdm(loader, desc="正在生成预测"):
+        for data in tqdm(loader, desc="Generating prediction"):
             data = data.to(device)
             pred_high, pred_low = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
             if pred_high.numel() == 0: continue
             
             y_high, y_low = data['stock'].y_high, data['stock'].y_low
             
-            # 反标准化
+            # anti-standardisation
             pred_high_unstd = (pred_high * torch.tensor(diag_std_high, device=device)) + torch.tensor(diag_mean_high, device=device)
             y_high_unstd = (y_high * torch.tensor(diag_std_high, device=device)) + torch.tensor(diag_mean_high, device=device)
             pred_low_unstd = (pred_low * torch.tensor(diag_std_low, device=device)) + torch.tensor(diag_mean_low, device=device)
@@ -43,22 +42,22 @@ def generate_predictions(model, loader, device, p, stock_ids, diag_mean_high, di
             all_preds_l.append(pred_low_unstd.cpu())
             all_actuals_l.append(y_low_unstd.cpu())
 
-    # 将所有批次的结果合并
+    # Combine the results of all batches
     preds_h, actuals_h = torch.cat(all_preds_h, dim=0), torch.cat(all_actuals_h, dim=0)
     preds_l, actuals_l = torch.cat(all_preds_l, dim=0), torch.cat(all_actuals_l, dim=0)
     
-    # 预测值的非负约束 (防止 QLIKE 爆炸)
+    # Non-negativity constraint on predicted values (to prevent QLIKE explosion)
     PREDICTION_LOWER_BOUND = 1e-8
     preds_h = torch.clamp(preds_h, min=PREDICTION_LOWER_BOUND)
     preds_l = torch.clamp(preds_l, min=PREDICTION_LOWER_BOUND)
     
     num_stocks = len(stock_ids)
     
-    # 高频数据重塑
+    # High-frequency data remodelling
     preds_h = preds_h.view(-1, num_stocks)
     actuals_h = actuals_h.view(-1, num_stocks)
     
-    # 低频数据重塑和日度聚合
+    # Low-frequency data reshaping and daily aggregation
     preds_l = preds_l.view(-1, num_stocks)
     actuals_l = actuals_l.view(-1, num_stocks)
     
@@ -67,20 +66,20 @@ def generate_predictions(model, loader, device, p, stock_ids, diag_mean_high, di
     
     if num_samples > 0 and num_samples % intraday_points == 0:
         num_days = num_samples // intraday_points
-        # 低频预测值取日内平均
+        # Low-frequency forecast values shall be taken as the intraday average.
         avg_preds_per_day = preds_l.reshape(num_days, intraday_points, num_stocks).mean(dim=1)
-        # 低频真实值取日内最后一个点（T+1d的RV）
+        # The low-frequency actual value shall be taken as the last point within the day.（the RV of T+1d）
         actuals_per_day = actuals_l.reshape(num_days, intraday_points, num_stocks)[:, -1, :]
     else:
         avg_preds_per_day = torch.empty(0, num_stocks)
         actuals_per_day = torch.empty(0, num_stocks)
 
-    # 创建高频 DataFrame
+    # Create a high-frequency DataFrame
     df_h_true = pd.DataFrame(actuals_h.numpy(), columns=stock_ids)
     df_h_pred = pd.DataFrame(preds_h.numpy(), columns=stock_ids)
     df_h_combined = pd.concat([df_h_true, df_h_pred], axis=1, keys=['True', 'Predicted'])
 
-    # 创建低频 DataFrame
+    # Create a low-frequency DataFrame
     df_l_true = pd.DataFrame(actuals_per_day.numpy(), columns=stock_ids)
     df_l_pred = pd.DataFrame(avg_preds_per_day.numpy(), columns=stock_ids)
     df_l_combined = pd.concat([df_l_true, df_l_pred], axis=1, keys=['True', 'Predicted'])
@@ -88,95 +87,85 @@ def generate_predictions(model, loader, device, p, stock_ids, diag_mean_high, di
     return df_h_combined, df_l_combined
 
 # ==============================================================================
-# II. Excel 组合函数
+# II. Excel Combination Functions
 # ==============================================================================
 
 def combine_to_excel(df_val, df_test, output_excel_path, file_prefix):
     """
-    将宽格式的验证集和测试集DataFrame转换为长格式，并保存为分Sheet的Excel文件。
+    Convert the wide-format validation and test set DataFrames into long format and save them as separate Excel sheets.
     """
-    print(f"\n--- 正在处理 {file_prefix} 数据并写入 Excel ---")
+    print(f"\n--- processing {file_prefix} data and write to Excel ---")
     
     all_long_dfs = []
     
     for df_wide, dataset_name in [(df_val, 'Validation'), (df_test, 'Test')]:
         if df_wide.empty:
-            print(f"警告：{dataset_name} 的 DataFrame 为空，跳过处理。")
+            print(f"Warning: The DataFrame for {dataset_name} is empty and has been skipped.")
             continue
-
-        # 使用 .stack(level=1) 将股票ID从列标题“堆叠”到行索引中
         df_long = df_wide.stack(level=1)
-        
-        # 重置索引，将'stock_id'从索引变为普通列
         df_long = df_long.reset_index()
-        
-        # 重命名列
         df_long = df_long.rename(columns={'level_0': 'Sample_Index', 'level_1': 'stock_id',
                                          'True': '真实值', 'Predicted': '预测值'})
-        
-        # 添加数据集标识列
-        df_long['数据集'] = dataset_name
-        
+        df_long['Dataset'] = dataset_name
         all_long_dfs.append(df_long)
 
     if not all_long_dfs:
-        print("错误：没有有效数据可以写入Excel。")
+        print("Error: No valid data available to write to Excel.")
         return
 
-    # 3. 合并验证集和测试集
     all_results_df = pd.concat(all_long_dfs, ignore_index=True)
     
-    # 4. 将结果写入分Sheet的Excel文件
-    print(f"--- 正在将结果写入Excel文件: {output_excel_path} ---")
+    print(f"--- Writing the results to an Excel file: {output_excel_path} ---")
     
     with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
-        # 按 'stock_id' 列分组
-        for stock_id, group_df in tqdm(all_results_df.groupby('stock_id'), desc="写入Sheet"):
-            # 选择最终需要的三列
-            sheet_data = group_df[['真实值', '预测值', '数据集']]
+        # Group by the 'stock_id' column
+        for stock_id, group_df in tqdm(all_results_df.groupby('stock_id'), desc="write to Sheet"):
+           
+            # Select the three columns ultimately required.
+            sheet_data = group_df[['Actual value', 'Predicted value', 'Dataset']]
             
-            # 写入以股票ID命名的Sheet，并且不写入pandas的行号索引
+            # Write to the sheet named after the stock ID
             sheet_data.to_excel(writer, sheet_name=str(stock_id), index=False)
 
-    print(f"成功创建文件: {output_excel_path}")
+    print(f"File successfully created: {output_excel_path}")
 
 # ==============================================================================
-# III. 主流程函数 (已集成 70% 稳健性检查逻辑)
+# III. Main process function (including 70% robustness check )
 # ==============================================================================
 
 def main():
     # ==============================================================================
-    # >>> 1. 用户需要配置的区域 <<<
+    # ======================== Deployment Zone =====================================
     # ==============================================================================
     
-    # 填入您最佳试验的输出文件夹路径
-    TRIAL_FOLDER = 'output/GATHAR_with_e_15_h_5154100_tuning/trial_39_20251124-110023' # <--- 请修改为您的路径
+    # Output folder path for the optimal trial
+    TRIAL_FOLDER = 'output/GATHAR_with_e_15_h_5154100_tuning/trial_39_20251124-110023' # your path
     
-    # 定义最终保存预测文件的输出文件夹
+    # Define the output folder where the final saved prediction files will be stored.
     PREDICTION_OUTPUT_FOLDER = 'prediction_results_70h1'
     
-    # 定义稳健性检查的比例 (70%)
+    # Define the proportion for robustness checks (70%)
     ROBUSTNESS_PROPORTION = 0.7 
     
     # ==============================================================================
 
-    print(f"--- 正在从试验文件夹加载配置: {TRIAL_FOLDER} ---")
+    print(f"--- Loading configuration from the test folder: {TRIAL_FOLDER} ---")
     
-    # 构造配置文件和模型文件的完整路径
+    # The full path to the configuration file and model file
     config_path = os.path.join(TRIAL_FOLDER, 'GNN_param_used.yaml')
     model_path = os.path.join(TRIAL_FOLDER, 'best_model.pth')
 
     if not os.path.exists(config_path) or not os.path.exists(model_path):
-        print(f"错误：在文件夹 '{TRIAL_FOLDER}' 中找不到 'GNN_param_used.yaml' 或 'best_model.pth'。")
-        print("请确保TRIAL_FOLDER路径正确。")
+        print(f"Error: 'GNN_param_used.yaml' or 'best_model.pth' could not be found in the folder '{TRIAL_FOLDER}'.")
+        print("Please ensure the TRIAL_FOLDER path is correct.")
         return
 
-    # 1. 加载特定试验的配置
+    # 1. Load the configuration for a specific test
     with open(config_path, 'r', encoding='utf-8') as f:
         p = yaml.safe_load(f)
 
-    # 2. 加载完整数据集
-    print("--- 正在加载数据集 ---")
+    # 2. Load the complete dataset
+    print("--- Loading dataset ---")
     dataset = FinalHeteroDataset(
         hdf5_file_vol=p['hdf5_file_vol_std'],
         hdf5_file_volvol=p['hdf5_file_volvol_std'],
@@ -190,38 +179,38 @@ def main():
         intraday_points=p['intraday_points']
     )
     
-    # 3. ⭐️ 稳健性检查的数据截断逻辑
+    # 3. Data truncation
     intraday_points = p.get('intraday_points', 3)
     total_days = len(dataset) // intraday_points
     
     robustness_limit_days = int(ROBUSTNESS_PROPORTION * total_days) 
-    dataset = dataset[:robustness_limit_days * intraday_points] # ⬅️ 截断数据集
-    total_days = robustness_limit_days # ⬅️ 更新总天数
+    dataset = dataset[:robustness_limit_days * intraday_points] # Truncate the dataset
+    total_days = robustness_limit_days # Total number of days updated
     
-    print(f"--- [预测截断] 总天数限制为: {total_days} 天 ({ROBUSTNESS_PROPORTION * 100:.0f}%) ---")
+    print(f"--- [Forecast Truncation] Total days limit: {total_days} days ({ROBUSTNESS_PROPORTION * 100:.0f}%) ---")
     
     subset_days = total_days
-    subset_dataset = dataset # 截断后的数据集
+    subset_dataset = dataset # Truncated dataset
     
-    # 4. 划分数据集 (在截断后的数据集上按比例划分 train/val/test)
+    # 4. Partition the dataset (split train/val/test proportionally on the truncated dataset)
     train_days = int(p['train_proportion'] * subset_days)
     validation_days = int(p['validation_proportion'] * subset_days)
     train_size = train_days * intraday_points
     validation_end_idx = (train_days + validation_days) * intraday_points
     
-    # 划分数据集
+    # Truncate the dataset
     train_dataset = subset_dataset[:train_size]
     validation_dataset = subset_dataset[train_size:validation_end_idx]
     test_dataset = subset_dataset[validation_end_idx:]
     
-    print(f"训练集大小: {len(train_dataset)} | 验证集大小: {len(validation_dataset)} | 测试集大小: {len(test_dataset)}")
+    print(f"Training set size: {len(train_dataset)} | Validation set size: {len(validation_dataset)} | Test set size: {len(test_dataset)}")
     
-    # 5. 创建DataLoader
+    # 5. create DataLoader
     validation_loader = DataLoader(validation_dataset, batch_size=256, shuffle=False, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=4)
-    print(f"验证集样本数: {len(validation_dataset)}, 测试集样本数: {len(test_dataset)}")
+    print(f"Number of samples in the validation set: {len(validation_dataset)}, Number of samples in the test set: {len(test_dataset)}")
 
-    # 6. 加载统计数据和模型构建参数
+    # 6. Loading statistical data and model-building parameters
     with open('./processed_data1001/vol_covol_stats.json', 'r', encoding='utf-8') as f:
         vol_stats = json.load(f)
     diag_mean_high, diag_std_high = vol_stats['stock_diag_mean'], vol_stats['stock_diag_std']
@@ -234,7 +223,7 @@ def main():
     stock_ids = node_info['stock_ids']
     num_stocks = len(stock_ids)
     
-    # 特征维度计算需要与训练时的配置一致
+    # Feature dimension calculations must be consistent with the configuration used during training.
     num_energy = len(node_info.get('energy_ids', []))
     stock_feature_len_base = 3 + 1 + (num_stocks - 1) + num_energy
     stock_feature_dim = stock_feature_len_base * p['seq_length']
@@ -242,8 +231,8 @@ def main():
     energy_feature_dim = energy_feature_len_base * p['seq_length']
     edge_feature_dim = 3 * p['seq_length']
 
-    # 7. 构建模型骨架并加载权重
-    print("--- 正在构建模型并加载预训练权重... ---")
+    # 7. Construct the model skeleton and load the weights
+    print("--- Building the model and loading pre-trained weights... ---")
     model = HeteroGNNModel(
         stock_feature_dim=stock_feature_dim, energy_feature_dim=energy_feature_dim, 
         edge_feature_dim=edge_feature_dim, heads=p['num_heads'], 
@@ -256,16 +245,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.load_state_dict(torch.load(model_path, map_location=device))
     model = model.to(device)
-    print("模型加载成功。")
+    print("Model loaded successfully.")
 
-    # 8. 生成预测
+    # 8. Generate predictions
     val_h_df, val_l_df = generate_predictions(model, validation_loader, device, p, stock_ids, diag_mean_high, diag_std_high, diag_mean_low, diag_std_low)
     test_h_df, test_l_df = generate_predictions(model, test_loader, device, p, stock_ids, diag_mean_high, diag_std_high, diag_mean_low, diag_std_low)
     
-    # 9. 合并并保存为Excel
+    # 9. Merge and save as Excel
     os.makedirs(PREDICTION_OUTPUT_FOLDER, exist_ok=True)
     
-    # 高频结果保存
+    # High-frequency results retention
     combine_to_excel(
         df_val=val_h_df, 
         df_test=test_h_df, 
@@ -273,7 +262,7 @@ def main():
         file_prefix='high_freq'
     )
 
-    # 低频结果保存
+    # Low-frequency results retention
     combine_to_excel(
         df_val=val_l_df, 
         df_test=test_l_df, 
@@ -281,7 +270,7 @@ def main():
         file_prefix='low_freq'
     )
 
-    print("\n" + "="*30 + " 所有预测和保存任务完成 " + "="*30)
+    print("\n" + "="*30 + " All forecasting and archiving tasks completed " + "="*30)
 
 
 if __name__ == '__main__':

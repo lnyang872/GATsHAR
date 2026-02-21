@@ -1,4 +1,4 @@
-# 超参数调优脚本 (支持连续区间优化)
+# Hyperparameter Tuning Script
 # -*- coding: utf-8 -*-
 
 import numpy as np
@@ -12,63 +12,61 @@ import traceback
 
 def objective(trial: optuna.trial.Trial) -> float:
     """
-    Optuna的目标函数，为每一次试验（Trial）运行一次完整的训练和评估。
+    The objective function of Optuna runs a complete training and evaluation cycle for each trial.
     """
-    # 1. 加载基础配置
+    # 1. Load base configuration
     with open('config/ablation_no_har.yaml', 'r', encoding='utf-8') as f:
         p = yaml.safe_load(f)
     
-    # 2. 根据 YAML 中的类型，为 grid 中列出的参数进行调优
+    # 2. Optimise the parameters listed in the grid according to the types specified in YAML.
     for param in p['grid']:
         if param in p['hyperparameters']:
             values, dtype = p['hyperparameters'][param]
             
-            # --- 核心修改部分 ---
             if param == 'hidden_layout':
-                # 特殊处理 hidden_layout
+                # Special handling hidden_layout
                 str_choices = [str(layout) for layout in values]
                 suggested_str = trial.suggest_categorical(param, str_choices)
                 p[param] = eval(suggested_str)
             
             elif dtype == 'cat':
-                # 处理分类参数
+                # Processing classification parameters
                 p[param] = trial.suggest_categorical(param, values)
             
             elif dtype == 'float':
-                # 新增：处理浮点数（连续区间）参数
+                # Handling floating-point (continuous interval) parameters
                 min_val, max_val = values
-                # 对学习率使用对数均匀分布进行采样，这在跨数量级搜索时更有效
+                # Sampling the learning rate using a log-uniform distribution
                 if param == 'learning_rate':
                     p[param] = trial.suggest_float(param, min_val, max_val, log=True)
                 else:
                     p[param] = trial.suggest_float(param, min_val, max_val, log=False)
             
             elif dtype == 'int':
-                # 新增：处理整数（连续区间）参数
+                # Handling integer (continuous range) parameters
                 min_val, max_val = values
                 p[param] = trial.suggest_int(param, min_val, max_val)
-            # --- 修改结束 ---
 
-    # 3. 为本次试验创建唯一的输出文件夹
+    # 3. Create a unique output folder for this experiment
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     trial_folder = os.path.join('output', f"{p['modelname']}_tuning", f"trial_{trial.number}_{timestamp}")
     os.makedirs(trial_folder, exist_ok=True)
 
-    # 4. 运行训练
+    # 4. Running training
     try:
         metrics = train(p=p, trial_folder=trial_folder)
         
-        # 5. 保存指标
+        # 5. Preservation indicators
         for key, value in metrics.items():
             trial.set_user_attr(key, value)
         trial.set_user_attr('output_folder', trial_folder)
 
-        # 6. 返回核心优化目标
+        # 6. Return to core optimisation objectives
         return metrics.get('min_validation_loss', float('inf'))
 
     except Exception as e:
-        print(f"错误: Trial #{trial.number} 因异常而失败: {e}")
-        print("\n" + "="*25 + " 完整错误追溯 (Traceback) " + "="*25)
+        print(f"Error: Trial {trial.number} failed due to an exception: {e}")
+        print("\n" + "="*25 + " traceback " + "="*25)
         traceback.print_exc()
         print("="*75 + "\n")
         return float('inf')
@@ -92,8 +90,8 @@ if __name__ == '__main__':
     
     study.optimize(objective, n_trials=p['n_trials'])
     
-    # --- 调优结束后，生成最终的总结报告 ---
-    print("\n--- 超参数调优完成 ---")
+    # --- Upon completion of the optimisation process, a final summary report shall be generated. ---
+    print("\n--- Hyperparameter tuning completed ---")
     
     results = []
     for trial in study.trials:
@@ -130,11 +128,11 @@ if __name__ == '__main__':
     summary_path = os.path.join(main_output_folder, 'tuning_summary.csv')
     results_df.to_csv(summary_path, index=False, float_format='%.12f')
     
-    print(f"\n最佳试验结果:")
+    print(f"\nOptimal experimental results:")
     best_params_display = study.best_params
     if 'hidden_layout' in best_params_display:
         best_params_display['hidden_layout'] = eval(best_params_display['hidden_layout'])
     print(best_params_display)
     
     print(f"  Value (min_validation_loss): {study.best_trial.value}")
-    print(f"\n--- 完整的调优总结报告已保存至: {summary_path} ---")
+    print(f"\n--- The complete optimisation summary report has been saved to: {summary_path} ---")

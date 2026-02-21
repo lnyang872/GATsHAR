@@ -88,16 +88,16 @@ def perform_overall_dm_analysis_to_excel():
                     df2 = all_data[stock][model2]
 
                     # Find the common indices for all models on the current stock
-                    indices_sets = [set(all_data[stock][m][all_data[stock][m]['数据集'] == dataset_type].index) for m in model_names if m in all_data[stock]]
+                    indices_sets = [set(all_data[stock][m][all_data[stock][m]['dataset'] == dataset_type].index) for m in model_names if m in all_data[stock]]
                     if not indices_sets: continue
                     common_indices = sorted(list(set.intersection(*indices_sets)))
 
                     if len(common_indices) < 2:
                         continue
 
-                    actuals = df1.loc[common_indices, '真实值'].values
-                    pred1 = df1.loc[common_indices, '预测值'].values
-                    pred2 = df2.loc[common_indices, '预测值'].values
+                    actuals = df1.loc[common_indices, 'Actual value'].values
+                    pred1 = df1.loc[common_indices, 'Predicted value'].values
+                    pred2 = df2.loc[common_indices, 'Predicted value'].values
                     
                     # loss difference: d = e1^2 - e2^2. 
                     loss_diff = (np.abs(actuals - pred1)**2 - np.abs(actuals - pred2)**2)

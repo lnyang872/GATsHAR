@@ -175,7 +175,7 @@ def main():
 
     print(f"writing to Excel: {output_path}")
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        for stock_id, group_df in tqdm(final_df.groupby('stock_code'), desc="写入Sheet"):
+        for stock_id, group_df in tqdm(final_df.groupby('stock_code'), desc="Writing to Sheet"):
             group_df[['Actual value', 'Predicted value', 'dataset']].to_excel(writer, sheet_name=str(stock_id), index=False)
             
     print(f"Saved successfully.")

@@ -18,18 +18,18 @@ def dm_test_from_diffs(d):
 
 def perform_overall_dm_analysis_to_excel():
     """
-    主函数，加载所有数据，进行汇总DM检验，并以表格形式输出到Excel文件。
+    Load all data, conduct a summary DM test, and output the results in tabular form to an Excel file.
     """
     file_path = '70_low_only_stock'
     all_files = glob.glob(os.path.join(file_path, "*.xlsx"))
     
     if not all_files:
-        print("错误：在当前目录下没有找到任何 .xlsx 文件。")
+        print("Error: No .xlsx files were found in the current directory.")
         return
 
-    print(f"找到了 {len(all_files)} 个模型文件: {all_files}\n")
+    print(f"Found {len(all_files)} model files: {all_files}\n")
 
-    # 步骤 1: 加载并预处理所有数据
+    # 1. Load and preprocess all data
     all_data = {}
     model_names_from_files = []
     for file in all_files:
@@ -41,7 +41,7 @@ def perform_overall_dm_analysis_to_excel():
                 df = pd.read_excel(xls, sheet_name=sheet_name)
                 df.columns = [col.strip() for col in df.columns]
                 
-                required_cols = ['真实值', '预测值', '数据集']
+                required_cols = ['Actual value', 'Predicted value', 'Dataset']
                 if not all(col in df.columns for col in required_cols):
                     continue
                 
@@ -52,26 +52,25 @@ def perform_overall_dm_analysis_to_excel():
                     all_data[sheet_name] = {}
                 all_data[sheet_name][model_name] = df_reversed
         except Exception as e:
-            print(f"处理文件 {file} 时出错: {e}")
+            print(f"An error occurred while processing file {file}: {e}")
 
     stock_names = list(all_data.keys())
     if not stock_names:
-        print("没有成功加载任何数据，无法进行分析。")
+        print("No data has been successfully loaded")
         return
         
-    # 获取排序后的模型名称列表，以保证表格顺序一致
+    # Obtain the sorted list of model names to ensure consistent table order.
     model_names = sorted(model_names_from_files)
     
-    # 创建一个Excel写入器
+    # Create an Excel writer
     output_filename = 'DM_Test_Results_l_only_s.xlsx'
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
         
-        # 步骤 2: 分别对 Validation 和 Test 数据集进行总体检验
+        # 2. Perform overall testing on both the validation and test datasets respectively.
         for dataset_type in ['Validation', 'Test']:
             
-            print(f"{'='*25} 正在生成: {dataset_type} 集的DM检验表 {'='*25}")
-            
-            # 创建一个空的DataFrame用于存放结果，行列都是模型名称
+            print(f"{'='*25} Generating: DM test table for {dataset_type} dataset {'='*25}")
+
             dm_table = pd.DataFrame(index=model_names, columns=model_names, dtype=object)
             
             model_pairs = combinations(model_names, 2)
@@ -80,7 +79,7 @@ def perform_overall_dm_analysis_to_excel():
                 
                 combined_loss_diffs = []
                 
-                # 步骤 3: 遍历所有股票，收集损失差异序列
+                # 3. Iterate through all stocks to collect loss difference sequences
                 for stock in stock_names:
                     if model1 not in all_data[stock] or model2 not in all_data[stock]:
                         continue
@@ -88,7 +87,7 @@ def perform_overall_dm_analysis_to_excel():
                     df1 = all_data[stock][model1]
                     df2 = all_data[stock][model2]
 
-                    # 找到当前股票上所有模型的共同索引
+                    # Find the common indices for all models on the current stock
                     indices_sets = [set(all_data[stock][m][all_data[stock][m]['数据集'] == dataset_type].index) for m in model_names if m in all_data[stock]]
                     if not indices_sets: continue
                     common_indices = sorted(list(set.intersection(*indices_sets)))
@@ -100,36 +99,36 @@ def perform_overall_dm_analysis_to_excel():
                     pred1 = df1.loc[common_indices, '预测值'].values
                     pred2 = df2.loc[common_indices, '预测值'].values
                     
-                    # 损失差异: d = e1^2 - e2^2. 
+                    # loss difference: d = e1^2 - e2^2. 
                     loss_diff = (np.abs(actuals - pred1)**2 - np.abs(actuals - pred2)**2)
                     combined_loss_diffs.append(loss_diff)
 
-                # 步骤 4: 拼接并执行一次DM检验
+                # 4. Concatenate and execute a DM verification once
                 if not combined_loss_diffs:
                     continue
 
                 final_d_series = np.concatenate(combined_loss_diffs)
                 dm_stat, p_value = dm_test_from_diffs(final_d_series, h=1)
                 
-                # 步骤 5: 格式化结果并填充到表格中
+                # 5. Format the results and populate the table
                 if not np.isnan(dm_stat):
-                    # 添加星号表示5%水平下显著
+                    # The asterisk indicates significance at the 5% level.
                     significance_star = "*" if p_value < 0.05 else ""
-                    # 格式化DM统计量，保留两位小数
+                    # Format DM statistics to two decimal places
                     formatted_stat = f"{dm_stat:.2f}{significance_star}"
                     dm_table.loc[model1, model2] = formatted_stat
                 else:
                     dm_table.loc[model1, model2] = "N/A"
 
-            # 步骤 6: 打印并保存到Excel
+            # 6. Print and save to Excel
             print(f"\n--- {dataset_type} Set Results ---")
             print(dm_table.fillna('').to_string())
             
-            # 将DataFrame写入Excel的一个sheet
+            # Write the DataFrame to a sheet in Excel
             dm_table.to_excel(writer, sheet_name=f'{dataset_type}_DM_Test', index=True)
-            print(f"\n结果已写入Excel文件 '{output_filename}' 的 '{dataset_type}_DM_Test' 工作表中。")
+            print(f"\nThe results have been written to the '{dataset_type}_DM_Test' worksheet in the Excel file '{output_filename}'.")
         
-    print(f"\n{'='*20} 所有分析完成 {'='*20}")
+    print(f"\n{'='*20} All analyses completed {'='*20}")
 
 if __name__ == '__main__':
     perform_overall_dm_analysis_to_excel()

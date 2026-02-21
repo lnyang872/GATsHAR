@@ -105,7 +105,7 @@ def combine_to_excel(df_val, df_test, output_excel_path, file_prefix):
         df_long = df_wide.stack(level=1)
         df_long = df_long.reset_index()
         df_long = df_long.rename(columns={'level_0': 'Sample_Index', 'level_1': 'stock_id',
-                                         'True': '真实值', 'Predicted': '预测值'})
+                                         'True': 'Actual value', 'Predicted': 'Predicted value'})
         df_long['Dataset'] = dataset_name
         all_long_dfs.append(df_long)
 

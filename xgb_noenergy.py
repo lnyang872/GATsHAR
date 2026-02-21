@@ -125,7 +125,7 @@ def prepare_combined_data(stock_data):
     index_cols = combined_df[['time_index', 'stock_code']]
     
     # 5. Generate one-hot encoding (to distinguish stock identities) 
-    print("--- Generate unique thermal codes ---")
+    print("--- Generate one-hot codes ---")
     features_df = pd.get_dummies(combined_df, columns=['stock_code'], prefix='stock')
     
     # Separate X and y

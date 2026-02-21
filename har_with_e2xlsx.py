@@ -167,7 +167,7 @@ def main():
         results_list.append(res_test)
     
     # --- 3. Overall assessment output (Macro Average) ---
-    print("\n" + "="*25 + " HAR-X-AllStocks 模型性能 (Macro Average) " + "="*25)
+    print("\n" + "="*25 + " HAR-X-AllStocks Model performance (Macro Average) " + "="*25)
     
     print("【Validation set】:")
     print(f"  - MSE:    {np.mean(val_metrics['mse']):.4e}")

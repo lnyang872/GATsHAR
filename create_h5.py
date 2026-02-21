@@ -6,45 +6,45 @@ from tqdm import tqdm
 import json
 
 # =========================================================================
-# ============================== 配置区 ===================================
+# ============================== Deployment Zone ===================================
 # =========================================================================
 
-# 包含所有MATLAB输出文件夹的根目录
+# The root directory containing all MATLAB output folders
 INPUT_BASE_FOLDER = './min'
 
-# 输出HDF5文件的文件夹
+# Folder for outputting HDF5 files
 OUTPUT_HDF5_FOLDER = './processed_data1001'
 
-# 节点信息文件 (非常重要，用于确定矩阵的顺序和维度)
+# Node Information File
 NODE_INFO_FILE = './node_info.json'
 
 # =========================================================================
 
 def build_h5_file(h5_path, vol_folders, covol_folders, node_order):
     """
-    一个通用的辅助函数，用于构建一个HDF5文件。
+    A general-purpose utility function for constructing an HDF5 file.
     """
     num_nodes = len(node_order)
     node_to_idx = {name: i for i, name in enumerate(node_order)}
     
-    print(f"\n--- 正在为 {os.path.basename(h5_path)} 加载数据 ---")
+    print(f"\n--- Loading data for {os.path.basename(h5_path)} ---")
     
-    # --- (核心修改) 1. 自动确定基准天数 ---
+    # --- 1. Automatically determine the base number of days ---
     final_days_length = None
-    # 尝试从第一个可用的波动率文件中确定天数
+    # Attempt to determine the number of days from the first available volatility file
     for folder in vol_folders:
         if os.path.exists(folder) and os.listdir(folder):
             first_file_path = os.path.join(folder, os.listdir(folder)[0])
             df_first = pd.read_csv(first_file_path, header=None)
             final_days_length = df_first.shape[1]
-            print(f"[调试信息] 已自动从文件 '{os.path.basename(first_file_path)}' 确定基准天数为: {final_days_length}")
-            break # 找到后即退出循环
+            print(f"[Debug Information] The baseline days have been automatically determined from the file '{os.path.basename(first_file_path)}' as: {final_days_length}")
+            break # Exit the loop once found
             
     if final_days_length is None:
-        print("错误：所有波动率文件夹均为空，无法确定基准天数。")
+        print("Error: All volatility folders are empty; the benchmark days cannot be determined.")
         return
 
-    # a. 加载所有波动率数据
+    # a. Load all volatility data
     vol_data = {}
     for folder in vol_folders:
         if not os.path.exists(folder): continue
@@ -54,16 +54,16 @@ def build_h5_file(h5_path, vol_folders, covol_folders, node_order):
                 if asset_id in node_order:
                     df = pd.read_csv(os.path.join(folder, file), header=None)
                     if df.shape[1] >= final_days_length:
-                        # 截取最后 final_days_length 列
+                        # Extract the final_days_length column
                         vol_data[asset_id] = df.iloc[:, -final_days_length:].values
                     else:
-                        print(f"  -> 警告: 波动率文件 {file} 的天数（{df.shape[1]}）少于要求的 {final_days_length}，已跳过。")
+                        print(f"  -> Warning: The number of days in the volatility file {file} ({df.shape[1]} ) is less than the required {final_days_length} and has been skipped.")
 
-    # b. 加载所有协波动率数据
+    # b. Load all co-volatility data
     covol_data = {}
     for group, folder in covol_folders.items():
         if not os.path.exists(folder): continue
-        print(f"正在加载组: {group}")
+        print(f"Loading group: {group}")
         for file in os.listdir(folder):
             if file.endswith('.csv'):
                 pair_name = os.path.splitext(file)[0]
@@ -77,34 +77,34 @@ def build_h5_file(h5_path, vol_folders, covol_folders, node_order):
                 if df.shape[1] >= final_days_length:
                     covol_data[pair_name] = df.iloc[:, -final_days_length:].values
                 else:
-                    print(f"  -> 警告: 协波动率文件 {file} 的天数（{df.shape[1]}）少于要求的 {final_days_length}，已跳过。")
+                    print(f"  -> Warning: The number of days in the co-volatility file {file} ({df.shape[1]} ) is less than the required {final_days_length} and has been skipped.")
             
-    # --- 2. 确定时间和维度 ---
+    # --- 2. Determine the time and dimension ---
     if not vol_data:
-        print(f"错误: 未能加载任何有效的波动率数据，无法继续。")
+        print(f"Error: Failed to load any valid volatility data; unable to proceed.")
         return
         
     num_timesteps = next(iter(vol_data.values())).shape[1]
     num_intraday_points = next(iter(vol_data.values())).shape[0]
 
-    print(f"数据加载完成。所有数据已截取为 {num_timesteps} 天, 每天 {num_intraday_points} 个日内时间点。")
+    print(f"Data loading complete. All data has been truncated to {num_timesteps} days, with {num_intraday_points} intraday points per day.")
     
-    # --- 3. 逐个时间点构建矩阵并写入HDF5 ---
+    # --- 3. Construct a matrix at each time point and write it to HDF5 ---
     with h5py.File(h5_path, 'w') as f:
         global_timestep_idx = 0
-        desc = f"构建矩阵 ({os.path.basename(h5_path)})"
+        desc = f"Constructing a matrix ({os.path.basename(h5_path)})"
         for day_idx in tqdm(range(num_timesteps), desc=desc):
             for point_idx in range(num_intraday_points):
                 
                 matrix = np.zeros((num_nodes, num_nodes))
                 
-                # a. 填充对角线 (波动率)
+                # a. Fill Diagonals (Volatility)
                 for asset_id, data in vol_data.items():
                     if asset_id in node_to_idx:
                         idx = node_to_idx[asset_id]
                         matrix[idx, idx] = data[point_idx, day_idx]
                 
-                # b. 填充非对角线 (协波动率)
+                # b. Fill non-diagonals (co-volatility)
                 for pair_name, data in covol_data.items():
                     try:
                         id1, id2 = pair_name.split('_')
@@ -117,11 +117,11 @@ def build_h5_file(h5_path, vol_folders, covol_folders, node_order):
                     except (ValueError, KeyError):
                         continue
 
-                # c. 将该时间点的矩阵写入HDF5
+                # c. Write the matrix at this point in time to HDF5
                 f.create_dataset(str(global_timestep_idx), data=matrix, dtype=np.float64)
                 global_timestep_idx += 1
 
-    print(f"成功创建HDF5文件: {os.path.basename(h5_path)}")
+    print(f"HDF5 file successfully created: {os.path.basename(h5_path)}")
 
 if __name__ == '__main__':
     if not os.path.exists(OUTPUT_HDF5_FOLDER):
@@ -132,9 +132,9 @@ if __name__ == '__main__':
             node_info = json.load(f)
         NODE_ORDER = node_info['node_order']
     except FileNotFoundError:
-        raise Exception(f"错误：找不到节点信息文件 {NODE_INFO_FILE}")
+        raise Exception(f"Error: Node information file {NODE_INFO_FILE} not found.")
 
-    # --- 任务1: 构建 vol_covol.h5 ---
+    # --- A. create vol_covol.h5 ---
     vol_covol_h5_path = os.path.join(OUTPUT_HDF5_FOLDER, 'vol_covol.h5')
     vol_folders_1 = [
         os.path.join(INPUT_BASE_FOLDER, 'stock_vol'),
@@ -146,7 +146,7 @@ if __name__ == '__main__':
     }
     build_h5_file(vol_covol_h5_path, vol_folders_1, covol_folders_1, NODE_ORDER)
     
-    # --- 任务2: 构建 volvol_covolvol.h5 ---
+    # --- B. create volvol_covolvol.h5 ---
     volvol_covolvol_h5_path = os.path.join(OUTPUT_HDF5_FOLDER, 'volvol_covolvol.h5')
     vol_folders_2 = [
         os.path.join(INPUT_BASE_FOLDER, 'stock_vol_of_vol'),
@@ -158,4 +158,4 @@ if __name__ == '__main__':
     }
     build_h5_file(volvol_covolvol_h5_path, vol_folders_2, covol_folders_2, NODE_ORDER)
 
-    print("\n--- 所有HDF5文件创建完毕！ ---")
+    print("\n--- All HDF5 files have been created. ---")

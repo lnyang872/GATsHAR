@@ -63,7 +63,7 @@ def create_windows(data, window_size, num_target_cols):
     return np.array(X), np.array(y)
 
 def calculate_macro_metrics_matrix(y_true, y_pred):
-    """输入维度 (Samples, Stocks)，按列计算指标并求平均"""
+    """Input dimensions (Samples, Stocks), compute indicators by column and calculate the average"""
     num_stocks = y_true.shape[1]
     mse_list, rmse_list, qlike_list = [], [], []
     
